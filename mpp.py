@@ -1,20 +1,106 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import abc
 from pathlib import Path
 import re
 import sys
 
 
-teststr = """ Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam
+teststr = """<!--preamble
+    (define Lorem Morel)
+    (delimiters { })
+    -->
+    Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam
 nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
 voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita
 kasd gubergren, no sea (color red takimata sanctus) est Lorem ipsum dolor sit
 amet. (it because better are your breasts than wine) Lorem ipsum dolor sit amet,
-consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et
+consetetur {it sadipscing elitr}, sed diam nonumy eirmod tempor invidunt ut labore et
 dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo
 duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est
 Lorem ipsum dolor sit amet. """
+
+
+class Expression:
+
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(self, key=None, delimiters=None):
+        if key:
+            self.key = key
+        if delimiters:
+            self.start, self.end = delimiters.split()
+
+    @property
+    @abc.abstractmethod
+    def key(self):
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def start(self):
+        raise NotImplementedError
+
+    @abc.abstractproperty
+    def end(self):
+        raise NotImplementedError
+
+    def expr(self):
+        """ return a compiled regex object that contains the groups 'head' and
+            'body'
+        """
+        exprs = [re.escape(self.start),
+                 rf"(?P<head>{self.key})",
+                 r"\s",
+                 rf"(?P<body>.*?)",
+                 re.escape(self.end)]
+        
+        return re.compile(''.join(exprs), re.M | re.S)
+
+    @abc.abstractmethod
+    def sub(self):
+        """ returns the replacement for body """    
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.key}, delimiters='{self.start} {self.end}')"
+
+
+class ItalicsExpr(Expression):
+    
+    key = 'it'
+    start = '('
+    end = ')'
+
+    def sub(self, m):
+        line = m.group("body")
+        return f"\\textit{{{line}}}"
+
+
+class ColorExpr(Expression):
+
+    key = 'color'
+    start = '('
+    end = ')'
+
+    def sub(self, m):
+        col, line = m.group("body").split(maxsplit=1)
+        return f"\\textcolor{{{col}}}{{{line}}}"
+
+
+class Settings(Expression):
+    
+    key = 'preamble'
+    start = '<!--'
+    end = '-->'
+    
+    def sub(self):
+        pass
+
+    def extract(self, text):
+        m = re.search(self.expr(), text)
+        return m.groupdict()
 
 
 class Processor:
@@ -25,27 +111,18 @@ class Processor:
     """
     
     def __init__(self):
-        self.start = r"("
-        self.end = r")"
-        self.keys = {}
-
-    def _expression(self, key):
-        expr = rf"(?P<head>{key})\s(?P<body>.*?)"
-        return re.compile(re.escape(self.start) + expr + re.escape(self.end), re.M | re.S)
+        self.expressions = []
+        self.defaults = ['set', 'define']
 
     def sub(self, key, func, text):
         return re.sub(self._expression(key), func, text)
 
-    def register(self, key, func):
-        self.keys[key] = func 
-
-    def delimiters(self, delim):
-            self.start, self.end = delim
+    def register(self, expr): 
+        self.expressions.append(expr)
 
     def extract(self, text):
-        for key, func in self.keys.items():
-            expr = self._expression(key)
-            return func(expr.search(text))
+        s = Settings()
+        return s.extract(text)
 
     def process(self, text):
         processed = text
@@ -56,28 +133,6 @@ class Processor:
             processed = self.sub(key, func, processed)
 
         return processed
-
-
-def it_repl(m):
-    line = m.group("body")
-    return f"\\textit{{{line}}}"
-
-
-def color_repl(m):
-    col, line = m.group("body").split(maxsplit=1)
-    return f"\\textcolor{{{col}}}{{{line}}}"
-
-
-def include_repl(m):
-    return Path(m.group("body")).open().read()
-
-
-def preamble_func(m):
-    exprs = m.group('body')
-    data = {}
-    head, _, body = exprs.partition(': ')
-    data[head.strip()] = body.strip()
-    return data
 
 
 def usage():
@@ -99,29 +154,11 @@ def get_files():
 
 if __name__ == "__main__":
 
-    inf, outf = get_files()
-    
-    preamble = Processor()
-    preamble.delimiters(('<!--', '-->'))
-    preamble.register("preamble", preamble_func)
-    
-    keys = {"it": it_repl, "color": color_repl, "include": include_repl}
-
-    with open(inf, 'r') as source:
-        text = source.read()
-        if outf == inf:
-            backup = "." + inf + "~"
-            with open(backup, 'w') as backup:
-                backup.write(text)
-
-    settings = preamble.extract(text)
-
-    x = Processor()
-    for pair in keys.items():
-        x.register(*pair)
-    for pair in settings['delimiters'].split():
-        x.delimiters(pair.split('-'))
-        text = x.process(text)
-
-    with open(outf, 'w') as target:
-        target.write(text)
+    # inf, outf = get_files()
+    p = Processor()
+    p.register(ItalicsExpr('{ }'))
+    p.register(ItalicsExpr())
+    p.register(ColorExpr())
+    for e in p.expressions:
+        print(re.sub(e.expr(), e.sub, teststr))
+    print(p.extract(teststr))
