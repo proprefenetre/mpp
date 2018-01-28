@@ -3,20 +3,19 @@
 
 import abc
 from pathlib import Path
+import heapq
 import re
 import sys
 
 
-teststr = """<!--preamble
-    (define Lorem Morel)
-    (delimiters { })
-    -->
+teststr = """
+(include ./LICENSE)
     Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam
 nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
 voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita
 kasd gubergren, no sea (color red takimata sanctus) est Lorem ipsum dolor sit
 amet. (it because better are your breasts than wine) Lorem ipsum dolor sit amet,
-consetetur {it sadipscing elitr}, sed diam nonumy eirmod tempor invidunt ut labore et
+consetetur |it sadipscing elitr|, |b sed diam nonumy eirmod tempor| invidunt ut labore et
 dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo
 duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est
 Lorem ipsum dolor sit amet. """
@@ -26,81 +25,87 @@ class Expression:
 
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, key=None, delimiters=None):
-        if key:
-            self.key = key
-        if delimiters:
-            self.start, self.end = delimiters.split()
+    def __init__(self, delim='( )'):
+        self.delim = delim
 
     @property
     @abc.abstractmethod
     def key(self):
+        """ key: mandatory attribute """
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def start(self):
+    def prio(self):
+        """ key: mandatory attribute """
         raise NotImplementedError
 
-    @abc.abstractproperty
-    def end(self):
-        raise NotImplementedError
+    @property
+    def delim(self):
+        """ delim: mandatory attribute """
+        return self._delim
+
+    @delim.setter
+    def delim(self, val):
+        self._delim = val.split()
 
     def expr(self):
         """ return a compiled regex object that contains the groups 'head' and
             'body'
         """
-        exprs = [re.escape(self.start),
+
+        exprs = [re.escape(self.delim[0]),
                  rf"(?P<head>{self.key})",
                  r"\s",
                  rf"(?P<body>.*?)",
-                 re.escape(self.end)]
+                 re.escape(self.delim[1])]
         
         return re.compile(''.join(exprs), re.M | re.S)
 
     @abc.abstractmethod
-    def sub(self):
+    def repl(self):
         """ returns the replacement for body """    
         raise NotImplementedError
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.key}, delimiters='{self.start} {self.end}')"
+        return f"{self.__class__.__name__}({self.key}, delimiters='{self.delim}')"
 
 
-class ItalicsExpr(Expression):
+class Bold(Expression):
+
+    key = 'b'
+    prio = 0
+
+    def repl(self, m):
+        return f"\\textbf{{{m.group('body')}}}"
+
+
+class Italics(Expression):
     
     key = 'it'
-    start = '('
-    end = ')'
+    prio = 0
 
-    def sub(self, m):
-        line = m.group("body")
-        return f"\\textit{{{line}}}"
+    def repl(self, m):
+        return f"\\textit{{{m.group('body')}}}"
 
 
-class ColorExpr(Expression):
+class Color(Expression):
 
     key = 'color'
-    start = '('
-    end = ')'
+    prio = 0
 
-    def sub(self, m):
+    def repl(self, m):
         col, line = m.group("body").split(maxsplit=1)
         return f"\\textcolor{{{col}}}{{{line}}}"
 
 
-class Settings(Expression):
-    
-    key = 'preamble'
-    start = '<!--'
-    end = '-->'
-    
-    def sub(self):
-        pass
+class Include(Expression):
 
-    def extract(self, text):
-        m = re.search(self.expr(), text)
-        return m.groupdict()
+    key = 'include'
+    prio = 9
+
+    def repl(self, m):
+        return Path(m.group("body")).open().read()
 
 
 class Processor:
@@ -111,28 +116,26 @@ class Processor:
     """
     
     def __init__(self):
-        self.expressions = []
-        self.defaults = ['set', 'define']
-
-    def sub(self, key, func, text):
-        return re.sub(self._expression(key), func, text)
+        self._expressions = []
+        self._extra_delim = ["{ }", "| |"]
 
     def register(self, expr): 
-        self.expressions.append(expr)
-
-    def extract(self, text):
-        s = Settings()
-        return s.extract(text)
+        self._expressions.append(expr)
+        for d in self._extra_delim:
+            expr.delim = d
+            self._expressions.append(expr)
+        
+    def _substitute(self, expr, text):
+        return expr.expr().sub(expr.repl, text)
 
     def process(self, text):
-        processed = text
-        if 'include' in self.keys:
-            processed = self.sub('include', self.keys['include'], processed)
+        for e in sorted(self._expressions, key=lambda x: x.prio, reverse=True):
+            text = self._substitute(e, text)
+            # for i in self._extra_delim:
+            #     e.delim = i
+            #     text = self._substitute(e, text)
 
-        for key, func in self.keys.items():
-            processed = self.sub(key, func, processed)
-
-        return processed
+        return text
 
 
 def usage():
@@ -155,10 +158,30 @@ def get_files():
 if __name__ == "__main__":
 
     # inf, outf = get_files()
-    p = Processor()
-    p.register(ItalicsExpr('{ }'))
-    p.register(ItalicsExpr())
-    p.register(ColorExpr())
-    for e in p.expressions:
-        print(re.sub(e.expr(), e.sub, teststr))
-    print(p.extract(teststr))
+    # p = Processor()
+    # p.register(Bold())
+    # p.register(Include())
+    # p.register(Italics())
+    # p.register(Color())
+
+    # print(p._expressions)
+
+    delim = ['( )', '{ }']
+    delim.append('| |')
+
+    starts = []
+    ends = []
+    for p in delim:
+        start, end = p.split()
+        starts.append(f"({re.escape(start)})")
+        ends.append(f"({re.escape(end)})")
+    
+    expr = ['(' + '|'.join(starts) + ')',
+            rf"(?P<head>it)",
+            r"\s",
+            rf"(?P<body>.*?)",
+            '(' + '|'.join(ends) + ')']
+
+    x = re.compile(''.join(expr), re.M | re.S)
+    print(re.sub(x, lambda m: f"\\textit{{{m.group('body')}}}", teststr))
+
