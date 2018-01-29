@@ -3,16 +3,15 @@
 
 import abc
 from pathlib import Path
-import heapq
 import re
 import sys
 
 
 teststr = """
-<!--settings 
+<!-- settings 
     delimiters: { }, | |, % %, (! !)
-    macro: Lorem Morel
 -->
+
 (include ./LICENSE)
     Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam
 nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
@@ -57,10 +56,11 @@ class Expression:
             ends.append(f"{re.escape(end)}")
         
         expr = [rf"({'|'.join(starts)})",
+                rf"(\s*?)",
                 rf"(?P<head>{self.key})",
                 r"\s*",
                 rf"(?P<body>.*?)",
-                r"\s*?",
+                r"\s*",
                 rf"({'|'.join(ends)})"]
 
         return re.compile(''.join(expr), re.M | re.S)
@@ -71,7 +71,7 @@ class Expression:
         raise NotImplementedError
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.__dict__})"
+        return f"<{self.__class__.__name__}: {self.__dict__}>"
 
 
 class Bold(Expression):
@@ -108,7 +108,10 @@ class Include(Expression):
     prio = 8
 
     def repl(self, m):
-        return Path(m.group("body")).open().read()
+        try:
+            return Path(m.group("body")).open().read()
+        except FileNotFoundError:
+            return f"Error: {m.group('body')} - File not Found"
 
 
 class Settings(Expression):
@@ -119,20 +122,25 @@ class Settings(Expression):
     def __init__(self):
         self.delim = ['<!-- -->']
  
-    def repl(self):
-        pass
+    def repl(self, m):
+        return ""
     
     def extract(self, text):
-        
         settings = {}
-        data = self.expr().search(text).group("body")
-        if data.count('\n') > 0:
-            for line in data.splitlines():
+
+        try:
+            data = self.expr().search(text)
+            settings['end'] = data.end()
+        except:
+            return settings
+
+        try:
+            for line in data.group("body").splitlines():
                 key, _, body = line.partition(':')
-                settings[key.strip()] = body.strip()
-        else:
+                settings.setdefault(key.strip(), []).append(body.strip())
+        except:
             key, _, body = data.partition(':')
-            settings[key.strip()] = body.strip()
+            settings.setdefault(key.strip(), []).append(body.strip())
         return settings
         
 
@@ -153,9 +161,6 @@ class Macro(Expression):
         self._key = v
 
     def expr(self):
-        """ return a compiled regex object that contains the groups 'head' and
-            'body'
-        """
         return re.compile(rf"(?P<head>{self.key})", re.M | re.S)
     
     def repl(self, m):
@@ -177,20 +182,19 @@ class Processor:
     def settings(self, text):
         """ extracts a block of settings from the text. """
         s = Settings()
-        for k, v in s.extract(text).items():
-            print(k, v)
+        rules = s.extract(text)
+        for k, v in rules.items():
             if k == "delimiters":
-                self.register_delimiters(*v.split(','))
+                self.register_delimiters(*v[0].split(','))
             if k == "macro":
-                self.register(Macro(*v.split()))
+                for line in v:
+                    key, body = line.split(maxsplit=1)
+                    self.register(Macro(key, body))
+        return text[rules['end']:]
 
     def register(self, *expr): 
         for e in expr:
             self._expressions.append(e)
-
-    def register_macros(self, *macros): 
-        for m in macros:
-            self._macros.append(m)
 
     def register_delimiters(self, *delimiters):
         for m in delimiters:
@@ -200,7 +204,7 @@ class Processor:
         return expr.expr().sub(expr.repl, text)
 
     def process(self, text):
-        self.settings(text)
+        text = self.settings(text)
         for e in sorted(self._expressions, key=lambda x: x.prio, reverse=True):
             try:
                 e.delim.extend(self._delim)
@@ -233,15 +237,7 @@ if __name__ == "__main__":
     # inf, outf = get_files()
     p = Processor()
     p.register(Bold(), Include(), Italics(), Color())
-
-    print(p._expressions)
-    # print(p._macros)
     print(p.process(teststr))
-    # s = Settings()
-    # x = s.expr().search(teststr).group("body")
-    # print(x.count('\n'))
-
-    
     
 
 
