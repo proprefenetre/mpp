@@ -7,23 +7,6 @@ import re
 import sys
 
 
-teststr = """
-<!-- settings 
-    delimiters: { }, | |, % %, (! !)
--->
-
-(include ./LICENSE)
-    Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam
-nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
-voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita
-kasd gubergren, no sea (color red takimata sanctus) est Lorem ipsum dolor sit
-amet. (it because better) are (!b your breasts than wine!) Lorem ipsum dolor sit amet,
-consetetur |it sadipscing elitr|, |b sed diam nonumy eirmod tempor| invidunt ut labore et
-dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo
-duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est
-Lorem ipsum dolor sit amet. """
-
-
 class Expression:
 
     __metaclass__ = abc.ABCMeta
@@ -232,12 +215,23 @@ def get_files():
     return inf, outf
 
 
-if __name__ == "__main__":
+def main():
+    inf, outf = get_files()
 
-    # inf, outf = get_files()
     p = Processor()
     p.register(Bold(), Include(), Italics(), Color())
-    print(p.process(teststr))
+
+    with open(inf, 'r') as i:
+        text = i.read()
+
+    with open(f".{inf}~", 'w') as b:
+        b.write(text)
     
+    
+    with open(outf, 'w') as o:
+        o.write(text)
 
 
+if __name__ == "__main__":
+    
+    main()
