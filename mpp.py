@@ -23,7 +23,12 @@ class Expression:
     @property
     @abc.abstractmethod
     def prio(self):
-        """ key: mandatory attribute """
+        """ prio: mandatory attribute. Determines replacement order"""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def repl(self):
+        """ returns the replacement for body """    
         raise NotImplementedError
 
     def expr(self):
@@ -39,19 +44,14 @@ class Expression:
             ends.append(f"{re.escape(end)}")
         
         expr = [rf"({'|'.join(starts)})",
-                rf"(\s*?)",
+                # rf"(\s*?)",   
                 rf"(?P<head>{self.key})",
-                r"\s*",
+                r"\s+",
                 rf"(?P<body>.*?)",
                 r"\s*",
                 rf"({'|'.join(ends)})"]
 
         return re.compile(''.join(expr), re.M | re.S)
-
-    @abc.abstractmethod
-    def repl(self):
-        """ returns the replacement for body """    
-        raise NotImplementedError
 
     def __repr__(self):
         return f"<{self.__class__.__name__}: {self.__dict__}>"
@@ -85,6 +85,15 @@ class Color(Expression):
         return f"\\textcolor{{{col}}}{{{line}}}"
 
 
+class Underline(Expression):
+
+    key = 'ul'
+    prio = 0
+
+    def repl(self, m):
+        return f"\\underline{{{m.group('body')}}}"
+
+
 class Include(Expression):
 
     key = 'include'
@@ -96,36 +105,6 @@ class Include(Expression):
         except FileNotFoundError:
             return f"Error: {m.group('body')} - File not Found"
 
-
-class Settings(Expression):
-
-    key = 'settings'
-    prio = 9
-
-    def __init__(self):
-        self.delim = ['<!-- -->']
- 
-    def repl(self, m):
-        return ""
-    
-    def extract(self, text):
-        settings = {}
-
-        try:
-            data = self.expr().search(text)
-            settings['end'] = data.end()
-        except:
-            return settings
-
-        try:
-            for line in data.group("body").splitlines():
-                key, _, body = line.partition(':')
-                settings.setdefault(key.strip(), []).append(body.strip())
-        except:
-            key, _, body = data.partition(':')
-            settings.setdefault(key.strip(), []).append(body.strip())
-        return settings
-        
 
 class Macro(Expression):
 
@@ -144,10 +123,35 @@ class Macro(Expression):
         self._key = v
 
     def expr(self):
-        return re.compile(rf"(?P<head>{self.key})", re.M | re.S)
+        return re.compile(rf"(?P<head>{re.escape(self._key)})", re.M | re.S)
     
     def repl(self, m):
         return self.body
+
+
+class Settings(Expression):
+
+    key = 'settings'
+    prio = 9
+
+    def __init__(self):
+        self.delim = ['<!-- -->']
+ 
+    def repl(self, m):
+        return m.groups("body")
+    
+    def extract(self, text):
+        settings = {}
+
+        data = self.expr().search(text)
+        if data:
+            settings['end'] = data.end()
+
+            for line in data.group("body").splitlines():
+                key, _, body = line.partition(':')
+                settings.setdefault(key.strip(), []).append(body.strip())
+
+        return settings
 
 
 class Processor:
@@ -163,23 +167,35 @@ class Processor:
         self._delim = []
 
     def settings(self, text):
+
         """ extracts a block of settings from the text. """
-        s = Settings()
-        rules = s.extract(text)
-        for k, v in rules.items():
-            if k == "delimiters":
-                self.register_delimiters(*v[0].split(','))
-            if k == "macro":
-                for line in v:
+
+        rules = Settings().extract(text)
+        first_line = 0
+        if rules: 
+            if "delimiters" in rules:
+                line = rules["delimiters"][0].split(',')
+                self.register_delimiters(*[x.strip() for x in line])
+            if "macro" in rules:
+                for line in rules["macro"]:
                     key, body = line.split(maxsplit=1)
-                    self.register(Macro(key, body))
-        return text[rules['end']:]
+                    self._macros.append(Macro(key, body))
+            first_line = rules['end']
+
+        return text[first_line:]    # cuts off the settings block
 
     def register(self, *expr): 
         for e in expr:
             self._expressions.append(e)
 
     def register_delimiters(self, *delimiters):
+
+        """ 
+        Ik kon niet kiezen dus we nemen ze allemaal!
+        (vooral bedoeld voor ingebedde Expressions, maar dat maakt eigenlijk
+        niet omdat ze niet matchen zonder key)
+        """
+
         for m in delimiters:
             self._delim.append(m)
         
@@ -189,11 +205,11 @@ class Processor:
     def process(self, text):
         text = self.settings(text)
         for e in sorted(self._expressions, key=lambda x: x.prio, reverse=True):
-            try:
-                e.delim.extend(self._delim)
-            except:
-                pass
+            e.delim.extend(self._delim)
             text = self._substitute(e, text)
+
+        for m in self._macros:
+            text = self._substitute(m, text)
 
         return text
 
@@ -215,23 +231,24 @@ def get_files():
     return inf, outf
 
 
-def main():
+if __name__ == "__main__":
+    
     inf, outf = get_files()
 
     p = Processor()
-    p.register(Bold(), Include(), Italics(), Color())
+    p.register(Bold(), Include(), Italics(), Color(), Underline())
 
     with open(inf, 'r') as i:
         text = i.read()
 
-    with open(f".{inf}~", 'w') as b:
-        b.write(text)
-    
-    
+    if inf == outf:
+        with open(f".{inf}~", 'w') as b:
+            b.write(text)
+
+    text = p.process(text)
+
     with open(outf, 'w') as o:
         o.write(text)
 
 
-if __name__ == "__main__":
     
-    main()
