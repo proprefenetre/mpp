@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import sys
 
-
 class Expression:
 
     __metaclass__ = abc.ABCMeta
@@ -32,9 +31,7 @@ class Expression:
         raise NotImplementedError
 
     def expr(self):
-        """ return a compiled regex object that contains the groups 'head' and
-            'body'
-        """
+        """ return a compiled regex object that contains the groups 'head' and 'body' """
 
         starts = []
         ends = []
@@ -106,6 +103,15 @@ class Include(Expression):
             return f"Error: {m.group('body')} - File not Found"
 
 
+class Note(Expression):
+
+    key = 'NB'
+    prio = 1
+
+    def repl(self, m):
+        return f"\\marginnote{{{m.group('body')}}}"
+
+
 class Macro(Expression):
 
     prio = 0
@@ -156,9 +162,8 @@ class Settings(Expression):
 
 class Processor:
 
-    """
-    Process expressions like:
-        (color red lorem ipsum dolor sit)
+    """ Process expressions like: 
+    (color red lorem ipsum dolor sit) 
     """
     
     def __init__(self):
@@ -167,9 +172,7 @@ class Processor:
         self._delim = []
 
     def settings(self, text):
-
         """ extracts a block of settings from the text. """
-
         rules = Settings().extract(text)
         first_line = 0
         if rules: 
@@ -189,13 +192,11 @@ class Processor:
             self._expressions.append(e)
 
     def register_delimiters(self, *delimiters):
-
         """ 
         Ik kon niet kiezen dus we nemen ze allemaal!
         (vooral bedoeld voor ingebedde Expressions, maar dat maakt eigenlijk
         niet omdat ze niet matchen zonder key)
         """
-
         for m in delimiters:
             self._delim.append(m)
         
@@ -220,6 +221,7 @@ def usage():
 
 
 def get_files():
+    """ rudimentary interface """
     n_args = len(sys.argv)
     if n_args < 2:
         usage()
@@ -236,7 +238,7 @@ if __name__ == "__main__":
     inf, outf = get_files()
 
     p = Processor()
-    p.register(Bold(), Include(), Italics(), Color(), Underline())
+    p.register(Bold(), Include(), Italics(), Color(), Underline(), Note())
 
     with open(inf, 'r') as i:
         text = i.read()
@@ -249,6 +251,3 @@ if __name__ == "__main__":
 
     with open(outf, 'w') as o:
         o.write(text)
-
-
-    
